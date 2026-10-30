@@ -12,6 +12,8 @@
 
 На видео показан пример использования `oes-babl` в Google Meet: демонстрация всего виртуального экрана с Chrome, при которой окна программ вне Xephyr остаются за пределами трансляции.
 
+https://github.com/user-attachments/assets/26db8b21-43b5-44ef-8eb0-d703c53bd700
+
 ## Требования
 
 - Linux, Bash и Google Chrome (`google-chrome-stable` или `google-chrome`).
