@@ -3,6 +3,14 @@ set -Eeuo pipefail
 
 die() { printf 'oes-babl: %s\n' "$*" >&2; exit 1; }
 
+saved_size=
+size_file=${XDG_CONFIG_HOME:-$HOME/.config}/oes-babl/screen-size
+if [[ -r $size_file ]]; then
+    IFS= read -r saved_size < "$size_file" || true
+fi
+[[ $saved_size =~ ^[1-9][0-9]{2,4}x[1-9][0-9]{2,4}$ ]] || saved_size=1920x1080
+size=${OES_BABL_SIZE:-$saved_size}
+
 if [[ ${1:-} == --help || ${1:-} == -h ]]; then
     printf '%s\n' \
         'Использование: oes-babl [URL]' \
@@ -10,7 +18,7 @@ if [[ ${1:-} == --help || ${1:-} == -h ]]; then
         'Экран — на весь монитор; Chrome — с вкладками и адресной строкой.' \
         'Сайт по умолчанию: https://lms.astanait.edu.kz' \
         'Перед запуском полностью выйдите из обычного Chrome.' \
-        'Размер по умолчанию: 1920x1200.' \
+        "Размер экрана: $size (сохранённый при установке: $saved_size)." \
         'Другой размер: OES_BABL_SIZE=1920x1080 oes-babl' \
         'Профиль (необязательно): CHROME_PROFILE="Profile 1" oes-babl'
     exit 0
@@ -23,7 +31,6 @@ browser=$(command -v google-chrome-stable || command -v google-chrome || true)
 [[ -n $browser ]] || die 'Google Chrome не найден.'
 [[ -n ${DISPLAY:-} ]] || die 'Нет DISPLAY. Для Xephyr нужен работающий Xwayland (xwayland-satellite).'
 
-size=${OES_BABL_SIZE:-1920x1200}
 [[ $size =~ ^[1-9][0-9]{2,4}x[1-9][0-9]{2,4}$ ]] || die 'Размер должен иметь вид 1920x1080.'
 profile_root=${CHROME_USER_DATA_DIR:-${CHROME_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}}/google-chrome}
 [[ -d $profile_root ]] || die "Не найден каталог существующего Chrome: $profile_root"
