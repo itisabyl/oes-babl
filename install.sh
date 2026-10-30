@@ -67,6 +67,13 @@ printf 'Размер сохранён: %s/screen-size\n' "$config_dir"
 install -Dm755 "$source_dir/oes-babl" "$HOME/.local/bin/oes-babl"
 printf 'Установлено: %s/.local/bin/oes-babl\n' "$HOME"
 
+install -Dm644 "$source_dir/bash/oes-babl.bash" "$config_dir/oes-babl.bash"
+bash_source_line='[ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/oes-babl/oes-babl.bash" ] || . "${XDG_CONFIG_HOME:-$HOME/.config}/oes-babl/oes-babl.bash"'
+if ! grep -Fqx -- "$bash_source_line" "$HOME/.bashrc" 2>/dev/null; then
+    printf '\n# oes-babl\n%s\n' "$bash_source_line" >> "$HOME/.bashrc"
+fi
+printf '%s\n' 'Команда oes-babl добавлена в Bash. Откройте новый терминал или выполните: source ~/.bashrc'
+
 if command -v fish >/dev/null; then
     fish_config=${XDG_CONFIG_HOME:-$HOME/.config}/fish
     install -Dm644 "$source_dir/fish/oes-babl.fish" "$fish_config/functions/oes-babl.fish"

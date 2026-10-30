@@ -59,6 +59,12 @@ check_case 'no active monitor: standard fallback' 1920x1080
 export TEST_NIRI='{"modes":[{"width":2560,"height":1600}],"current_mode":0}'
 check_case 'reinstall replaces the saved resolution' 2560x1600
 
+[[ $(grep -Fc '# oes-babl' "$HOME/.bashrc") == 1 ]]
+printf '%s\n' 'PASS reinstall does not duplicate Bash configuration'
+bash --noprofile --norc -c 'source "$HOME/.bashrc"; oes-babl --help' > "$test_dir/help"
+grep -Fq 'Размер экрана: 2560x1600 ' "$test_dir/help"
+printf '%s\n' 'PASS Bash command works without changing PATH'
+
 OES_BABL_SIZE=1280x720 "$HOME/.local/bin/oes-babl" --help > "$test_dir/help"
 grep -Fq 'Размер экрана: 1280x720 ' "$test_dir/help"
 printf '%s\n' 'PASS explicit size overrides saved setting'
