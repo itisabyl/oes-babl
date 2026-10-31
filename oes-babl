@@ -50,7 +50,8 @@ flock -n 9 || die 'Виртуальный экран уже запущен.'
 lock_target=$(readlink "$profile_root/SingletonLock" 2>/dev/null || true)
 lock_pid=${lock_target##*-}
 if [[ $lock_pid =~ ^[0-9]+$ ]] && kill -0 "$lock_pid" 2>/dev/null; then
-    if [[ ! -r /proc/$lock_pid/cmdline ]] || grep -zqi 'chrome' "/proc/$lock_pid/cmdline" 2>/dev/null; then
+    cmdline=$(tr '\0' ' ' < "/proc/$lock_pid/cmdline" 2>/dev/null || true)
+    if [[ -z $cmdline || ${cmdline,,} == *chrome* ]]; then
         die 'Chrome уже работает. Сохраните работу, выберите в Chrome меню ⋮ → Выход и запустите oes-babl снова.'
     fi
 fi
@@ -68,24 +69,22 @@ session_dir=$(mktemp -d "$runtime_dir/session.XXXXXXXX")
 auth_file=$session_dir/Xauthority
 xephyr_pid= wm_pid= chrome_pid=
 
+stop_process() {
+    local pid=${1:-} timeout=${2:-20} attempt
+    [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null || return 0
+    kill -TERM "$pid" 2>/dev/null || true
+    for ((attempt=0; attempt<timeout; attempt++)); do
+        kill -0 "$pid" 2>/dev/null || return 0
+        sleep 0.1
+    done
+    kill -KILL "$pid" 2>/dev/null || true
+}
+
 cleanup() {
     trap - EXIT INT TERM HUP
-    if [[ -n $chrome_pid ]] && kill -0 "$chrome_pid" 2>/dev/null; then
-        kill -TERM "$chrome_pid" 2>/dev/null || true
-        for ((attempt=0; attempt<50; attempt++)); do
-            kill -0 "$chrome_pid" 2>/dev/null || break
-            sleep 0.1
-        done
-        kill -0 "$chrome_pid" 2>/dev/null && kill -KILL "$chrome_pid" 2>/dev/null || true
-    fi
-    if [[ -n $wm_pid ]]; then
-        kill "$wm_pid" 2>/dev/null || true
-        wait "$wm_pid" 2>/dev/null || true
-    fi
-    if [[ -n $xephyr_pid ]]; then
-        kill "$xephyr_pid" 2>/dev/null || true
-        wait "$xephyr_pid" 2>/dev/null || true
-    fi
+    stop_process "$chrome_pid" 50
+    stop_process "$wm_pid" 20
+    stop_process "$xephyr_pid" 20
     rm -rf -- "$session_dir"
 }
 trap cleanup EXIT
@@ -97,6 +96,10 @@ xkb_layout=${OES_BABL_LAYOUT:-}
 kxkbrc=${XDG_CONFIG_HOME:-$HOME/.config}/kxkbrc
 if [[ -z $xkb_layout && -r $kxkbrc ]]; then
     xkb_layout=$(awk -F= '$1 == "LayoutList" { print $2; exit }' "$kxkbrc" 2>/dev/null || true)
+fi
+niri_config=${XDG_CONFIG_HOME:-$HOME/.config}/niri/config.kdl
+if [[ -z $xkb_layout && -r $niri_config ]]; then
+    xkb_layout=$(awk '/^[[:space:]]*layout[[:space:]]+"/ { gsub(/.*layout[[:space:]]+"|".*/, ""); print; exit }' "$niri_config" 2>/dev/null || true)
 fi
 if [[ -z $xkb_layout ]]; then
     host_xkb=$(xprop -root _XKB_RULES_NAMES 2>/dev/null | awk -F'"' '{ print $6 }' || true)
