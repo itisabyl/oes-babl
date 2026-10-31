@@ -1,4 +1,4 @@
-# oes-babl
+﻿# oes-babl
 
 Проект создан методом вайбкодинга — с помощью ИИ.
 
@@ -14,12 +14,17 @@
 
 https://github.com/user-attachments/assets/26db8b21-43b5-44ef-8eb0-d703c53bd700
 
-## Требования
+## Windows
+
+Нативная экспериментальная Windows-версия на PowerShell и Virtual Display Driver: [установка, запуск, тесты и ограничения](README-Windows.md).
+При демонстрации «Весь экран» необходимо выбрать именно VDD-монитор. Полная изоляция уровня Xephyr не гарантируется; Windows 10 использует явно выбранный режим MonitorOnly.
+
+## Требования Linux-версии
 
 - Linux, Bash и Google Chrome (`google-chrome-stable` или `google-chrome`).
 - Xephyr, Openbox, xauth, xprop, mcookie и flock.
 - В Wayland-сессии нужен работающий Xwayland и переменная `DISPLAY`. В KDE Plasma и GNOME это встроено, а в niri обычно обеспечивается через `xwayland-satellite`.
-- Zsh и fish необязательны. Windows и macOS не поддерживаются.
+- Zsh и fish необязательны. Для Windows предусмотрен отдельный лаунчер; macOS не поддерживается.
 
 В Arch Linux зависимости устанавливаются так:
 

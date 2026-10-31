@@ -1,7 +1,15 @@
-*.log
+﻿*.log
 .env
 .env.*
 !.env.example
 Xauthority
 Singleton*
 screen-size
+
+# Windows-generated binaries and private browser data
+lib/*.dll
+lib/vda.json
+chrome-data/
+.install-*/
+*.zip
+*.bundle
