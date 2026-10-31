@@ -20,6 +20,7 @@ if [[ ${1:-} == --help || ${1:-} == -h ]]; then
         'Перед запуском полностью выйдите из обычного Chrome.' \
         "Размер экрана: $size (сохранённый при установке: $saved_size)." \
         'Другой размер: OES_BABL_SIZE=1920x1080 oes-babl' \
+        'Раскладки клавиатуры: OES_BABL_LAYOUT=us,ru,kz oes-babl' \
         'Профиль (необязательно): CHROME_PROFILE="Profile 1" oes-babl'
     exit 0
 fi
@@ -29,7 +30,7 @@ for dependency in Xephyr openbox xauth xprop mcookie flock; do
 done
 browser=$(command -v google-chrome-stable || command -v google-chrome || true)
 [[ -n $browser ]] || die 'Google Chrome не найден.'
-[[ -n ${DISPLAY:-} ]] || die 'Нет DISPLAY. Для Xephyr нужен работающий Xwayland (xwayland-satellite).'
+[[ -n ${DISPLAY:-} ]] || die 'Нет DISPLAY. Для Xephyr нужен работающий Xwayland (например, встроенный в KDE/GNOME или xwayland-satellite в niri).'
 
 [[ $size =~ ^[1-9][0-9]{2,4}x[1-9][0-9]{2,4}$ ]] || die 'Размер должен иметь вид 1920x1080.'
 profile_root=${CHROME_USER_DATA_DIR:-${CHROME_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}}/google-chrome}
@@ -92,10 +93,25 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 
+xkb_layout=${OES_BABL_LAYOUT:-}
+kxkbrc=${XDG_CONFIG_HOME:-$HOME/.config}/kxkbrc
+if [[ -z $xkb_layout && -r $kxkbrc ]]; then
+    xkb_layout=$(awk -F= '$1 == "LayoutList" { print $2; exit }' "$kxkbrc" 2>/dev/null || true)
+fi
+if [[ -z $xkb_layout ]]; then
+    host_xkb=$(xprop -root _XKB_RULES_NAMES 2>/dev/null | awk -F'"' '{ print $6 }' || true)
+    [[ $host_xkb == *,* ]] && xkb_layout=$host_xkb
+fi
+[[ $xkb_layout =~ ^[a-zA-Z0-9_,]+$ ]] || xkb_layout=us,ru
+xkb_options=${OES_BABL_XKB_OPTIONS:-grp:alt_shift_toggle}
+[[ $xkb_options =~ ^[a-zA-Z0-9_,:+-]+$ ]] || xkb_options=grp:alt_shift_toggle
+
 touch "$auth_file"
 chmod 600 "$auth_file"
 xauth -f "$auth_file" add "$virtual_display" MIT-MAGIC-COOKIE-1 "$(mcookie)"
 Xephyr "$virtual_display" -screen "$size" -fullscreen -nolisten tcp -noreset \
+    -no-host-grab -title "oes-babl" \
+    -xkb-layout "$xkb_layout" -xkb-options "$xkb_options" \
     -auth "$auth_file" >"$session_dir/xephyr.log" 2>&1 9>&- &
 xephyr_pid=$!
 
