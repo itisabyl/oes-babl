@@ -35,12 +35,23 @@ browser=$(command -v google-chrome-stable || command -v google-chrome || true)
 profile_root=${CHROME_USER_DATA_DIR:-${CHROME_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}}/google-chrome}
 [[ -d $profile_root ]] || die "Не найден каталог существующего Chrome: $profile_root"
 
-exec 9>"${XDG_RUNTIME_DIR:-/tmp}/oes-babl-$UID.lock"
+if [[ -n ${XDG_RUNTIME_DIR:-} && -d $XDG_RUNTIME_DIR && -w $XDG_RUNTIME_DIR ]]; then
+    runtime_dir=$XDG_RUNTIME_DIR/oes-babl
+    mkdir -p -m 700 "$runtime_dir"
+else
+    runtime_dir=/tmp/oes-babl-$UID
+    mkdir -p -m 700 "$runtime_dir"
+    [[ -O $runtime_dir ]] || die "Небезопасный владелец каталога блокировки: $runtime_dir"
+    chmod 700 "$runtime_dir"
+fi
+exec 9>"$runtime_dir/lock"
 flock -n 9 || die 'Виртуальный экран уже запущен.'
 lock_target=$(readlink "$profile_root/SingletonLock" 2>/dev/null || true)
 lock_pid=${lock_target##*-}
 if [[ $lock_pid =~ ^[0-9]+$ ]] && kill -0 "$lock_pid" 2>/dev/null; then
-    die 'Chrome уже работает. Сохраните работу, выберите в Chrome меню ⋮ → Выход и запустите oes-babl снова.'
+    if [[ ! -r /proc/$lock_pid/cmdline ]] || grep -zqi 'chrome' "/proc/$lock_pid/cmdline" 2>/dev/null; then
+        die 'Chrome уже работает. Сохраните работу, выберите в Chrome меню ⋮ → Выход и запустите oes-babl снова.'
+    fi
 fi
 
 display_number=
@@ -52,26 +63,34 @@ for candidate in {99..119}; do
 done
 [[ -n $display_number ]] || die 'Нет свободного номера виртуального экрана (99–119).'
 virtual_display=:$display_number
-session_dir=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/oes-babl.XXXXXXXX")
+session_dir=$(mktemp -d "$runtime_dir/session.XXXXXXXX")
 auth_file=$session_dir/Xauthority
 xephyr_pid= wm_pid= chrome_pid=
 
 cleanup() {
-    trap - EXIT INT TERM
+    trap - EXIT INT TERM HUP
     if [[ -n $chrome_pid ]] && kill -0 "$chrome_pid" 2>/dev/null; then
         kill -TERM "$chrome_pid" 2>/dev/null || true
         for ((attempt=0; attempt<50; attempt++)); do
             kill -0 "$chrome_pid" 2>/dev/null || break
             sleep 0.1
         done
+        kill -0 "$chrome_pid" 2>/dev/null && kill -KILL "$chrome_pid" 2>/dev/null || true
     fi
-    [[ -z $wm_pid ]] || kill "$wm_pid" 2>/dev/null || true
-    [[ -z $xephyr_pid ]] || kill "$xephyr_pid" 2>/dev/null || true
+    if [[ -n $wm_pid ]]; then
+        kill "$wm_pid" 2>/dev/null || true
+        wait "$wm_pid" 2>/dev/null || true
+    fi
+    if [[ -n $xephyr_pid ]]; then
+        kill "$xephyr_pid" 2>/dev/null || true
+        wait "$xephyr_pid" 2>/dev/null || true
+    fi
     rm -rf -- "$session_dir"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 touch "$auth_file"
 chmod 600 "$auth_file"
@@ -86,13 +105,17 @@ for ((attempt=0; attempt<100; attempt++)); do
         cat "$session_dir/xephyr.log" >&2
         die 'Не удалось открыть Xephyr.'
     fi
-    if [[ -S /tmp/.X11-unix/X$display_number ]]; then
+    if [[ -S /tmp/.X11-unix/X$display_number ]] &&
+        DISPLAY="$virtual_display" XAUTHORITY="$auth_file" xprop -root >/dev/null 2>&1; then
         ready=true
         break
     fi
     sleep 0.1
 done
-[[ $ready == true ]] || die 'Xephyr не запустился за 10 секунд.'
+if [[ $ready != true ]]; then
+    cat "$session_dir/xephyr.log" >&2
+    die 'Xephyr не запустился за 10 секунд.'
+fi
 
 env -u WAYLAND_DISPLAY DISPLAY="$virtual_display" XAUTHORITY="$auth_file" \
     XDG_SESSION_TYPE=x11 openbox >"$session_dir/openbox.log" 2>&1 9>&- &
@@ -101,7 +124,10 @@ wm_pid=$!
 # Wait for the window manager so Chrome can request maximization reliably.
 ready=false
 for ((attempt=0; attempt<100; attempt++)); do
-    kill -0 "$wm_pid" 2>/dev/null || die 'Не удалось запустить Openbox.'
+    if ! kill -0 "$wm_pid" 2>/dev/null; then
+        cat "$session_dir/openbox.log" >&2
+        die 'Не удалось запустить Openbox.'
+    fi
     wm_state=$(DISPLAY="$virtual_display" XAUTHORITY="$auth_file" \
         xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null || true)
     if [[ $wm_state == *'window id # '* ]]; then
@@ -110,9 +136,12 @@ for ((attempt=0; attempt<100; attempt++)); do
     fi
     sleep 0.1
 done
-[[ $ready == true ]] || die 'Openbox не запустился за 10 секунд.'
+if [[ $ready != true ]]; then
+    cat "$session_dir/openbox.log" >&2
+    die 'Openbox не запустился за 10 секунд.'
+fi
 
-chrome_args=(--ozone-platform=x11 "--user-data-dir=$profile_root" --start-maximized)
+chrome_args=(--ozone-platform=x11 --disable-background-mode "--user-data-dir=$profile_root" --start-maximized)
 [[ -z ${CHROME_PROFILE:-} ]] || chrome_args+=("--profile-directory=$CHROME_PROFILE")
 if (( $# == 0 )); then
     set -- https://lms.astanait.edu.kz
