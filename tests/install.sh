@@ -12,15 +12,21 @@ cat > "$test_dir/bin/niri" <<'SH'
 [[ -n ${TEST_NIRI:-} ]] || exit 1
 printf '%s\n' "$TEST_NIRI"
 SH
+cat > "$test_dir/bin/kscreen-doctor" <<'SH'
+#!/bin/bash
+[[ -n ${TEST_KSCREEN:-} ]] || exit 1
+printf '%s\n' "$TEST_KSCREEN"
+SH
 cat > "$test_dir/bin/xrandr" <<'SH'
 #!/bin/bash
 [[ -n ${TEST_XRANDR:-} ]] || exit 1
 printf '%s\n' "$TEST_XRANDR"
 SH
-chmod +x "$test_dir/bin/niri" "$test_dir/bin/xrandr"
+chmod +x "$test_dir/bin/niri" "$test_dir/bin/kscreen-doctor" "$test_dir/bin/xrandr"
 export PATH="$test_dir/bin:$PATH"
 export HOME="$test_dir/home"
 export XDG_CONFIG_HOME="$test_dir/config with spaces"
+export ZDOTDIR="$test_dir/zsh config"
 unset OES_BABL_SIZE
 
 check_case() {
@@ -45,6 +51,14 @@ export TEST_NIRI='{"modes":[{"width":1920,"height":1200}],"current_mode":0,"logi
 check_case 'rotated niri output' 1200x1920
 
 export TEST_NIRI='null'
+export TEST_KSCREEN='{"outputs":[{"connected":true,"enabled":true,"priority":2,"currentModeId":"1","modes":[{"id":"1","size":{"width":1920,"height":1080}}],"rotation":1},{"connected":true,"enabled":true,"priority":1,"currentModeId":"2","modes":[{"id":"2","size":{"width":2560,"height":1600}}],"rotation":1}]}'
+export TEST_XRANDR='eDP-1 connected primary 1600x1000+0+0 (normal)'
+check_case 'KDE Plasma physical mode, primary priority output' 2560x1600
+
+export TEST_KSCREEN='{"outputs":[{"connected":true,"enabled":true,"priority":1,"currentModeId":"1","modes":[{"id":"1","size":{"width":1920,"height":1080}}],"rotation":2}]}'
+check_case 'rotated KDE Plasma output' 1080x1920
+
+export TEST_KSCREEN=
 export TEST_XRANDR=$'DP-1 connected 1920x1080+0+0 (normal)\nDP-2 connected primary 2560x1440-2560+0 (normal)'
 check_case 'X11 primary active monitor' 2560x1440
 
@@ -64,6 +78,14 @@ printf '%s\n' 'PASS reinstall does not duplicate Bash configuration'
 bash --noprofile --norc -c 'source "$HOME/.bashrc"; oes-babl --help' > "$test_dir/help"
 grep -Fq 'Размер экрана: 2560x1600 ' "$test_dir/help"
 printf '%s\n' 'PASS Bash command works without changing PATH'
+
+if command -v zsh >/dev/null; then
+    [[ $(grep -Fc '# oes-babl' "$ZDOTDIR/.zshrc") == 1 ]]
+    [[ ! -e $HOME/.zshrc ]]
+    PATH=/usr/bin:/bin zsh -d -i -c 'oes-babl --help' > "$test_dir/help"
+    grep -Fq 'Размер экрана: 2560x1600 ' "$test_dir/help"
+    printf '%s\n' 'PASS Zsh uses ZDOTDIR, works without PATH, and installs once'
+fi
 
 OES_BABL_SIZE=1280x720 "$HOME/.local/bin/oes-babl" --help > "$test_dir/help"
 grep -Fq 'Размер экрана: 1280x720 ' "$test_dir/help"

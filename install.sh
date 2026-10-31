@@ -28,6 +28,34 @@ except (ValueError, KeyError, TypeError, IndexError, AttributeError):
         fi
     fi
 
+    # On KDE Plasma (Wayland), query KScreen for the physical mode to avoid Xwayland scaling.
+    if command -v kscreen-doctor >/dev/null && command -v python3 >/dev/null; then
+        detected=$(kscreen-doctor -j 2>/dev/null | python3 -c '
+import json, re, sys
+try:
+    raw = re.sub(r"\x1b\[[0-9;]*m", "", sys.stdin.read())
+    data = json.loads(raw)
+    outputs = [
+        o for o in data.get("outputs", [])
+        if o.get("connected") and o.get("enabled") and o.get("currentModeId") is not None
+    ]
+    outputs.sort(key=lambda o: (0 if o.get("priority") == 1 else 1, o.get("priority") or 999))
+    output = outputs[0]
+    mode_id = str(output["currentModeId"])
+    mode = next(m for m in output.get("modes", []) if str(m.get("id")) == mode_id)
+    width, height = mode["size"]["width"], mode["size"]["height"]
+    if output.get("rotation") in (2, 8, "Left", "Right", "90", "270"):
+        width, height = height, width
+    print(f"{width}x{height}")
+except (ValueError, KeyError, TypeError, IndexError, AttributeError, StopIteration):
+    sys.exit(1)
+' 2>/dev/null) || detected=
+        if valid_size "$detected"; then
+            printf '%s\n' "$detected"
+            return
+        fi
+    fi
+
     # On X11, choose the primary active output, or the first active output.
     if command -v xrandr >/dev/null; then
         detected=$(xrandr --query 2>/dev/null | awk '
@@ -73,6 +101,15 @@ if ! grep -Fqx -- "$bash_source_line" "$HOME/.bashrc" 2>/dev/null; then
     printf '\n# oes-babl\n%s\n' "$bash_source_line" >> "$HOME/.bashrc"
 fi
 printf '%s\n' 'Команда oes-babl добавлена в Bash. Откройте новый терминал или выполните: source ~/.bashrc'
+
+if command -v zsh >/dev/null; then
+    zshrc=${ZDOTDIR:-$HOME}/.zshrc
+    mkdir -p -- "$(dirname -- "$zshrc")"
+    if ! grep -Fqx -- "$bash_source_line" "$zshrc" 2>/dev/null; then
+        printf '\n# oes-babl\n%s\n' "$bash_source_line" >> "$zshrc"
+    fi
+    printf 'Команда oes-babl добавлена в Zsh: %s. Откройте новый терминал.\n' "$zshrc"
+fi
 
 if command -v fish >/dev/null; then
     fish_config=${XDG_CONFIG_HOME:-$HOME/.config}/fish

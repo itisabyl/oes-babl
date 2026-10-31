@@ -3,6 +3,89 @@ set -Eeuo pipefail
 
 die() { printf 'oes-babl: %s\n' "$*" >&2; exit 1; }
 
+prepare_runtime() {
+    local parent=${XDG_RUNTIME_DIR:-} lock
+    if [[ -n $parent && ! -L $parent && -d $parent && -O $parent &&
+          $(stat -c '%a' -- "$parent") == 700 ]]; then
+        runtime_dir=$parent/oes-babl
+    else
+        runtime_dir=/tmp/oes-babl-$UID
+    fi
+    # mkdir is atomic. Never follow or chmod a pre-existing shared-/tmp entry.
+    if ! mkdir -m 700 -- "$runtime_dir" 2>/dev/null; then
+        [[ ! -L $runtime_dir && -d $runtime_dir && -O $runtime_dir &&
+           $(stat -c '%a' -- "$runtime_dir") == 700 ]] ||
+            die "Небезопасный каталог блокировки: $runtime_dir"
+    fi
+    lock=$runtime_dir/lock
+    [[ ! -L $lock && ( ! -e $lock || ( -f $lock && -O $lock ) ) ]] ||
+        die "Небезопасный файл блокировки: $lock"
+    exec 9>>"$lock"
+    flock -n 9 || die 'Виртуальный экран уже запущен.'
+}
+
+profile_in_use() {
+    local target pid process=
+    target=$(readlink "$1/SingletonLock" 2>/dev/null || true)
+    pid=${target##*-}
+    [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || return 1
+    # Inspect argv[0], not arbitrary arguments containing the word "chrome".
+    if [[ -r /proc/$pid/cmdline ]]; then
+        IFS= read -r -d '' process < "/proc/$pid/cmdline" || true
+    fi
+    case ${process##*/} in
+        ''|chrome|google-chrome|google-chrome-stable) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+select_keyboard() {
+    local desktop=:${XDG_CURRENT_DESKTOP:-}:${XDG_SESSION_DESKTOP:-}:
+    local config=${XDG_CONFIG_HOME:-$HOME/.config} detected_layout= detected_options= host_xkb=
+    desktop=${desktop,,}
+    case $desktop in
+        *:niri:*)
+            if [[ -r $config/niri/config.kdl ]]; then
+                detected_layout=$(awk '/^[[:space:]]*layout[[:space:]]+"/ { gsub(/.*layout[[:space:]]+"|".*/, ""); print; exit }' "$config/niri/config.kdl")
+                detected_options=$(awk '/^[[:space:]]*options[[:space:]]+"/ { gsub(/.*options[[:space:]]+"|".*/, ""); print; exit }' "$config/niri/config.kdl")
+            fi
+            ;;
+        *:kde:*|*:plasma:*)
+            if [[ -r $config/kxkbrc ]]; then
+                detected_layout=$(awk -F= '$1 == "LayoutList" { print $2; exit }' "$config/kxkbrc")
+                detected_options=$(awk -F= '$1 == "Options" { print $2; exit }' "$config/kxkbrc")
+            fi
+            ;;
+    esac
+    if [[ -z $detected_layout && -z ${OES_BABL_LAYOUT:-} ]]; then
+        host_xkb=$(xprop -root _XKB_RULES_NAMES 2>/dev/null || true)
+        detected_layout=$(awk -F'"' '{print $6}' <<< "$host_xkb")
+        detected_options=$(awk -F'"' '{print $10}' <<< "$host_xkb")
+    fi
+    [[ $detected_layout =~ ^[a-zA-Z0-9_,]+$ ]] || detected_layout=us,ru
+    [[ $detected_options =~ ^[a-zA-Z0-9_,:+-]*$ ]] || detected_options=
+    xkb_layout=${OES_BABL_LAYOUT:-$detected_layout}
+    xkb_options=${OES_BABL_XKB_OPTIONS-${detected_options:-grp:alt_shift_toggle}}
+    [[ $xkb_layout =~ ^[a-zA-Z0-9_,]+$ ]] || die 'Некорректное значение OES_BABL_LAYOUT.'
+    [[ $xkb_options =~ ^[a-zA-Z0-9_,:+-]*$ ]] || die 'Некорректное значение OES_BABL_XKB_OPTIONS.'
+}
+
+stop_process() {
+    local pid=${1:-} timeout=${2:-20} attempt
+    [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null || return 0
+    kill -TERM "$pid" 2>/dev/null || true
+    for ((attempt=0; attempt<timeout; attempt++)); do
+        kill -0 "$pid" 2>/dev/null || return 0
+        sleep 0.1
+    done
+    kill -KILL "$pid" 2>/dev/null || true
+}
+
+# Functions can be loaded by regression tests without starting a desktop session.
+if [[ ${BASH_SOURCE[0]} != "$0" ]]; then
+    return 0
+fi
+
 saved_size=
 size_file=${XDG_CONFIG_HOME:-$HOME/.config}/oes-babl/screen-size
 if [[ -r $size_file ]]; then
@@ -20,6 +103,7 @@ if [[ ${1:-} == --help || ${1:-} == -h ]]; then
         'Перед запуском полностью выйдите из обычного Chrome.' \
         "Размер экрана: $size (сохранённый при установке: $saved_size)." \
         'Другой размер: OES_BABL_SIZE=1920x1080 oes-babl' \
+        'Раскладки клавиатуры: OES_BABL_LAYOUT=us,ru,kz oes-babl' \
         'Профиль (необязательно): CHROME_PROFILE="Profile 1" oes-babl'
     exit 0
 fi
@@ -29,17 +113,14 @@ for dependency in Xephyr openbox xauth xprop mcookie flock; do
 done
 browser=$(command -v google-chrome-stable || command -v google-chrome || true)
 [[ -n $browser ]] || die 'Google Chrome не найден.'
-[[ -n ${DISPLAY:-} ]] || die 'Нет DISPLAY. Для Xephyr нужен работающий Xwayland (xwayland-satellite).'
+[[ -n ${DISPLAY:-} ]] || die 'Нет DISPLAY. Для Xephyr нужен работающий Xwayland (например, встроенный в KDE/GNOME или xwayland-satellite в niri).'
 
 [[ $size =~ ^[1-9][0-9]{2,4}x[1-9][0-9]{2,4}$ ]] || die 'Размер должен иметь вид 1920x1080.'
 profile_root=${CHROME_USER_DATA_DIR:-${CHROME_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}}/google-chrome}
 [[ -d $profile_root ]] || die "Не найден каталог существующего Chrome: $profile_root"
 
-exec 9>"${XDG_RUNTIME_DIR:-/tmp}/oes-babl-$UID.lock"
-flock -n 9 || die 'Виртуальный экран уже запущен.'
-lock_target=$(readlink "$profile_root/SingletonLock" 2>/dev/null || true)
-lock_pid=${lock_target##*-}
-if [[ $lock_pid =~ ^[0-9]+$ ]] && kill -0 "$lock_pid" 2>/dev/null; then
+prepare_runtime
+if profile_in_use "$profile_root"; then
     die 'Chrome уже работает. Сохраните работу, выберите в Chrome меню ⋮ → Выход и запустите oes-babl снова.'
 fi
 
@@ -52,31 +133,30 @@ for candidate in {99..119}; do
 done
 [[ -n $display_number ]] || die 'Нет свободного номера виртуального экрана (99–119).'
 virtual_display=:$display_number
-session_dir=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/oes-babl.XXXXXXXX")
+session_dir=$(mktemp -d "$runtime_dir/session.XXXXXXXX")
 auth_file=$session_dir/Xauthority
 xephyr_pid= wm_pid= chrome_pid=
 
 cleanup() {
-    trap - EXIT INT TERM
-    if [[ -n $chrome_pid ]] && kill -0 "$chrome_pid" 2>/dev/null; then
-        kill -TERM "$chrome_pid" 2>/dev/null || true
-        for ((attempt=0; attempt<50; attempt++)); do
-            kill -0 "$chrome_pid" 2>/dev/null || break
-            sleep 0.1
-        done
-    fi
-    [[ -z $wm_pid ]] || kill "$wm_pid" 2>/dev/null || true
-    [[ -z $xephyr_pid ]] || kill "$xephyr_pid" 2>/dev/null || true
+    trap - EXIT INT TERM HUP
+    stop_process "$chrome_pid" 50
+    stop_process "$wm_pid" 20
+    stop_process "$xephyr_pid" 20
     rm -rf -- "$session_dir"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+select_keyboard
 
 touch "$auth_file"
 chmod 600 "$auth_file"
 xauth -f "$auth_file" add "$virtual_display" MIT-MAGIC-COOKIE-1 "$(mcookie)"
 Xephyr "$virtual_display" -screen "$size" -fullscreen -nolisten tcp -noreset \
+    -no-host-grab -title "oes-babl" \
+    -xkb-layout "$xkb_layout" -xkb-options "$xkb_options" \
     -auth "$auth_file" >"$session_dir/xephyr.log" 2>&1 9>&- &
 xephyr_pid=$!
 
@@ -86,13 +166,17 @@ for ((attempt=0; attempt<100; attempt++)); do
         cat "$session_dir/xephyr.log" >&2
         die 'Не удалось открыть Xephyr.'
     fi
-    if [[ -S /tmp/.X11-unix/X$display_number ]]; then
+    if [[ -S /tmp/.X11-unix/X$display_number ]] &&
+        DISPLAY="$virtual_display" XAUTHORITY="$auth_file" xprop -root >/dev/null 2>&1; then
         ready=true
         break
     fi
     sleep 0.1
 done
-[[ $ready == true ]] || die 'Xephyr не запустился за 10 секунд.'
+if [[ $ready != true ]]; then
+    cat "$session_dir/xephyr.log" >&2
+    die 'Xephyr не запустился за 10 секунд.'
+fi
 
 env -u WAYLAND_DISPLAY DISPLAY="$virtual_display" XAUTHORITY="$auth_file" \
     XDG_SESSION_TYPE=x11 openbox >"$session_dir/openbox.log" 2>&1 9>&- &
@@ -101,7 +185,10 @@ wm_pid=$!
 # Wait for the window manager so Chrome can request maximization reliably.
 ready=false
 for ((attempt=0; attempt<100; attempt++)); do
-    kill -0 "$wm_pid" 2>/dev/null || die 'Не удалось запустить Openbox.'
+    if ! kill -0 "$wm_pid" 2>/dev/null; then
+        cat "$session_dir/openbox.log" >&2
+        die 'Не удалось запустить Openbox.'
+    fi
     wm_state=$(DISPLAY="$virtual_display" XAUTHORITY="$auth_file" \
         xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null || true)
     if [[ $wm_state == *'window id # '* ]]; then
@@ -110,9 +197,12 @@ for ((attempt=0; attempt<100; attempt++)); do
     fi
     sleep 0.1
 done
-[[ $ready == true ]] || die 'Openbox не запустился за 10 секунд.'
+if [[ $ready != true ]]; then
+    cat "$session_dir/openbox.log" >&2
+    die 'Openbox не запустился за 10 секунд.'
+fi
 
-chrome_args=(--ozone-platform=x11 "--user-data-dir=$profile_root" --start-maximized)
+chrome_args=(--ozone-platform=x11 --disable-background-mode "--user-data-dir=$profile_root" --start-maximized)
 [[ -z ${CHROME_PROFILE:-} ]] || chrome_args+=("--profile-directory=$CHROME_PROFILE")
 if (( $# == 0 )); then
     set -- https://lms.astanait.edu.kz
