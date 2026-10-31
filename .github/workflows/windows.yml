@@ -1,0 +1,15 @@
+﻿name: Windows checks
+on:
+  push:
+  pull_request:
+jobs:
+  powershell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Windows PowerShell 5.1 runtime tests
+        shell: powershell
+        run: .\tests\run.ps1
+      - name: Installer fixture tests (no driver installation)
+        shell: powershell
+        run: .\tests\install.ps1 -SelfTest
