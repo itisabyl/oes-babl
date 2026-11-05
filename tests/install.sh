@@ -87,6 +87,13 @@ if command -v zsh >/dev/null; then
     printf '%s\n' 'PASS Zsh uses ZDOTDIR, works without PATH, and installs once'
 fi
 
+if command -v fish >/dev/null; then
+    [[ -r $XDG_CONFIG_HOME/fish/functions/oes-babl.fish ]]
+    [[ -r $XDG_CONFIG_HOME/fish/completions/oes-babl.fish ]]
+    fish -n "$XDG_CONFIG_HOME/fish/functions/oes-babl.fish" "$XDG_CONFIG_HOME/fish/completions/oes-babl.fish"
+    printf '%s\n' 'PASS fish function and completions installed and valid'
+fi
+
 OES_BABL_SIZE=1280x720 "$HOME/.local/bin/oes-babl" --help > "$test_dir/help"
 grep -Fq 'Размер экрана: 1280x720 ' "$test_dir/help"
 printf '%s\n' 'PASS explicit size overrides saved setting'
@@ -100,3 +107,11 @@ rm "$XDG_CONFIG_HOME/oes-babl/screen-size"
 "$HOME/.local/bin/oes-babl" --help > "$test_dir/help"
 grep -Fq 'Размер экрана: 1920x1080 ' "$test_dir/help"
 printf '%s\n' 'PASS missing saved setting falls back safely'
+
+"$HOME/.local/bin/oes-babl" --auto-size --help > "$test_dir/help"
+grep -Fq 'Размер экрана: 2560x1600 ' "$test_dir/help"
+printf '%s\n' 'PASS --auto-size dynamically queries active monitor at launch'
+
+OES_BABL_SIZE=auto "$HOME/.local/bin/oes-babl" --help > "$test_dir/help"
+grep -Fq 'Размер экрана: 2560x1600 ' "$test_dir/help"
+printf '%s\n' 'PASS OES_BABL_SIZE=auto dynamically queries active monitor at launch'

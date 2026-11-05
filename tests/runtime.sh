@@ -74,6 +74,17 @@ select_keyboard
 [[ $xkb_layout == us,de && $xkb_options == grp:ctrl_shift_toggle ]]
 printf '%s\n' 'PASS KDE uses its own layout and options'
 
+printf '[Layout]\nLayoutList=us,ru\nOptions=scrolllock:mod3\n' > "$XDG_CONFIG_HOME/kxkbrc"
+printf '[KDE Keyboard Layout Switcher]\nSwitch to Next Keyboard Layout=Alt+Shift,Alt+Shift,Switch to Next Keyboard Layout\n' > "$XDG_CONFIG_HOME/kglobalshortcutsrc"
+select_keyboard
+[[ $xkb_layout == us,ru && $xkb_options == scrolllock:mod3,grp:alt_shift_toggle ]]
+printf '%s\n' 'PASS KDE appends kglobalshortcutsrc toggle when kxkbrc Options lacks grp:*'
+
+printf '[KDE Keyboard Layout Switcher]\nSwitch to Next Keyboard Layout=Meta+Space,Meta+Space,Switch to Next Keyboard Layout\n' > "$XDG_CONFIG_HOME/kglobalshortcutsrc"
+select_keyboard
+[[ $xkb_layout == us,ru && $xkb_options == scrolllock:mod3,grp:win_space_toggle ]]
+printf '%s\n' 'PASS KDE maps Meta+Space shortcut from kglobalshortcutsrc to grp:win_space_toggle'
+
 unset XDG_CURRENT_DESKTOP
 select_keyboard
 [[ $xkb_layout == de ]]
@@ -125,3 +136,34 @@ wait "$child_pid" 2>/dev/null || true
 ! kill -0 "$child_pid" 2>/dev/null
 child_pid=
 printf '%s\n' 'PASS process ignoring TERM is stopped after the grace period'
+
+OES_BABL_CLIPBOARD=0 start_clipboard_bridge :0 :99 "$test_dir/nonexistent" "$test_dir/clipboard.log"
+[[ -z $clipboard_pid ]]
+printf '%s\n' 'PASS clipboard bridge skipped when OES_BABL_CLIPBOARD=0'
+
+if (OES_BABL_CLIPBOARD=invalid start_clipboard_bridge :0 :99 "$test_dir/nonexistent" "$test_dir/clipboard.log") 2>/dev/null; then
+    printf '%s\n' 'FAIL invalid OES_BABL_CLIPBOARD accepted' >&2; exit 1
+fi
+printf '%s\n' 'PASS invalid OES_BABL_CLIPBOARD rejected'
+
+OES_BABL_STANDALONE=1 resolve_profile_root
+[[ $profile_root == "$XDG_CONFIG_HOME/oes-babl/chrome-profile" && -d $profile_root && $(stat -c '%a' "$profile_root") == 700 ]]
+printf '%s\n' 'PASS standalone mode creates isolated 0700 Chrome profile directory'
+
+rm -rf "$XDG_CONFIG_HOME/oes-babl/chrome-profile"
+ln -s "$test_dir/victim" "$XDG_CONFIG_HOME/oes-babl/chrome-profile"
+if (OES_BABL_STANDALONE=1 resolve_profile_root) 2>/dev/null; then
+    printf '%s\n' 'FAIL standalone profile symlink accepted' >&2; exit 1
+fi
+rm "$XDG_CONFIG_HOME/oes-babl/chrome-profile"
+printf '%s\n' 'PASS standalone profile symlink rejected'
+
+if (OES_BABL_STANDALONE=invalid resolve_profile_root) 2>/dev/null; then
+    printf '%s\n' 'FAIL invalid OES_BABL_STANDALONE accepted' >&2; exit 1
+fi
+printf '%s\n' 'PASS invalid OES_BABL_STANDALONE rejected'
+
+if ("$source_dir/oes-babl" --unknown-flag) 2>/dev/null; then
+    printf '%s\n' 'FAIL unknown CLI option accepted' >&2; exit 1
+fi
+printf '%s\n' 'PASS unknown CLI option rejected'
